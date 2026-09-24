@@ -20,8 +20,10 @@ echo "==> installing app to ${APP_DIR}"
 install -d -o "$USER" -g "$USER" -m 0755 "$APP_DIR"
 install -o root -g root -m 0755 "$SRC_DIR/proxy.py" "$APP_DIR/proxy.py"
 
-echo "==> creating venv + installing pymupdf"
-uv venv "$APP_DIR/.venv" --python 3.12
+echo "==> creating venv + installing pymupdf (BASE ON SYSTEM PYTHON, not uv cache:"
+echo "    a uv-managed python symlinks into ~/.local/share/uv/python which the unit"
+echo "    rejects under ProtectHome=true -> status 203/EXEC)"
+uv venv "$APP_DIR/.venv" --python /usr/bin/python3.13
 uv pip install --python "$APP_DIR/.venv/bin/python" pymupdf
 # venv + app readable/executable by the runtime user (root:histerp), not others
 chown -R root:"$USER" "$APP_DIR"
