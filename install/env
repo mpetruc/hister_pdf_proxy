@@ -1,0 +1,2 @@
+# Hister PDF-import proxy configuration (read by systemd EnvironmentFile).
+HISTER_PROXY_UPSTREAM=http://192.168.3.120:4433

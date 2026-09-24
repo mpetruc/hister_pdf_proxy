@@ -1,0 +1,40 @@
+[Unit]
+Description=Hister PDF-import proxy (PyMuPDF extraction, bypass asciimoo/pdf whitespace bug)
+Documentation=https://github.com/asciimoo/hister/issues/55
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=histerp
+Group=histerp
+WorkingDirectory=/opt/hister-pdf-proxy
+EnvironmentFile=/etc/hister-pdf-proxy/env
+ExecStart=/opt/hister-pdf-proxy/.venv/bin/python /opt/hister-pdf-proxy/proxy.py --listen 0.0.0.0 --port 4434
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+# NOTE: MemoryDenyWriteExecute intentionally omitted — PyMuPDF/libmupdf needs
+# W+X trampolines for its native text extraction; enabling it breaks startup.
+
+# Read-only root; the proxy needs no writable data dir (extraction is in-memory,
+# writes temp PDFs to TMPDIR under PrivateTmp).
+ReadOnlyPaths=/opt/hister-pdf-proxy
+
+[Install]
+WantedBy=multi-user.target
