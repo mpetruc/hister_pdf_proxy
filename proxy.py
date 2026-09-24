@@ -64,24 +64,39 @@ def extract_pdf_text(pdf_bytes: bytes) -> str:
     return "\n".join(parts)
 
 
-def do_csrf_handshake(base_url: str, token: str):
+def do_csrf_handshake(base_url: str, headers: dict):
     """Return (csrf token, cookie jar) for a downstream /api/add POST.
 
-    Mirrors HisterClient.add(): GET /api/config through the same CookieJar to
-    bind the X-Csrf-Token to the session cookie.
+    GET /api/config through the same CookieJar to bind the X-Csrf-Token to the
+    session, forwarding the client's auth headers (X-Access-Token and/or Cookie)
+    so the session is authenticated.
     """
     import http.cookiejar as cookiejar
 
     jar = cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-    req = urllib.request.Request(
-        f"{base_url}/api/config",
-        headers={"Authorization": f"Bearer {token}"},
-        method="GET",
-    )
+    req = urllib.request.Request(f"{base_url}/api/config", headers=headers, method="GET")
     with opener.open(req, timeout=20) as r:
         csrf = r.headers.get("X-Csrf-Token", "")
     return csrf, opener
+
+
+def _client_auth_headers(token: str, cookie: str, have_token: bool) -> dict:
+    """Auth headers for the downstream request, mirroring the client's scheme.
+
+    The extension authenticates either with an access token (X-Access-Token /
+    Authorization: Bearer) OR with browser cookies (Cookie: ...) — see
+    Popup.svelte: "Authenticate with a global or personal access token. Leave
+    blank to use browser cookies." Trust the client's own headers verbatim so
+    whichever scheme they used works downstream.
+    """
+    h = {}
+    if have_token and token:
+        h["X-Access-Token"] = token
+        h["Authorization"] = f"Bearer {token}"
+    if cookie:
+        h["Cookie"] = cookie
+    return h
 
 
 def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes) -> tuple:
@@ -94,8 +109,12 @@ def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes) -> tuple:
         return 400, json.dumps({"error": "pdf contains no extractable text"}), None
 
     url = document.get("url", "")
-    token = document.get("_token", "")  # injected by handler
-    csrf, opener = do_csrf_handshake(base_url, token)
+    token = document.get("_token", "")          # access token, if the client sent one
+    have_token = bool(document.get("_have_token"))
+    cookie = document.get("_cookie", "")        # browser session cookie, if sent
+
+    auth_headers = _client_auth_headers(token, cookie, have_token)
+    csrf, opener = do_csrf_handshake(base_url, auth_headers)
 
     payload = {"url": url, "text": text}
     for f in DOC_FIELDS:
@@ -103,16 +122,19 @@ def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes) -> tuple:
         if v:
             payload[f] = v
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"{base_url}/api/add",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {token}",
+    headers = dict(auth_headers)
+    headers.update(
+        {
             "X-Csrf-Token": csrf,
             "Content-Type": "application/json",
             # CLI bypass: lets this downstream call skip the CSRF session check.
             "Origin": "hister://",
-        },
+        }
+    )
+    req = urllib.request.Request(
+        f"{base_url}/api/add",
+        data=body,
+        headers=headers,
         method="POST",
     )
     try:
@@ -124,7 +146,7 @@ def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes) -> tuple:
         return 502, json.dumps({"error": f"forward failed: {e}"}), str(e)
 
 
-def handle_add_pdf(body: bytes, token: str) -> tuple:
+def handle_add_pdf(body: bytes, token: str, cookie: str, have_token: bool) -> tuple:
     """Entry point: decode the /api/add_pdf payload and forward as /api/add."""
     try:
         req = json.loads(body or b"{}")
@@ -144,6 +166,8 @@ def handle_add_pdf(body: bytes, token: str) -> tuple:
         return 400, json.dumps({"error": f"pdf must be base64-encoded: {e}"}), None
 
     document["_token"] = token
+    document["_cookie"] = cookie
+    document["_have_token"] = have_token
     return forward_pdf(UPSTREAM, document, pdf_bytes)
 
 
@@ -214,7 +238,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         body = self._log_body()
         if self.command.upper() == "POST" and self.path.rstrip("/") == "/api/add_pdf":
-            status, resp, err = handle_add_pdf(body, self._token())
+            token = self._token()
+            cookie = self.headers.get("Cookie", "")
+            status, resp, err = handle_add_pdf(body, token, cookie, have_token=bool(token))
             logger.info("add_pdf -> /api/add status=%s %s", status, "err=" + str(err) if err else "")
             self._send(status, resp.encode("utf-8"))
             return
