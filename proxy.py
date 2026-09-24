@@ -152,8 +152,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
     server_version = "HisterPDFProxy/0.1"
 
     def _token(self) -> str:
-        auth = self.headers.get("Authorization", "")
-        return auth[len("Bearer "):] if auth.lower().startswith("bearer ") else ""
+        # The web-research provider sends `Authorization: Bearer ***`, but the
+        # browser extension authenticates with `X-Access-Token` (network.ts).
+        # Hister's requestAccessToken prefers X-Access-Token then falls back to
+        # Bearer (server.go:194-198). Accept both so ANY /api/add_pdf client
+        # (extension, provider, CLI) reaches the downstream /api/add authenticated.
+        tok = self.headers.get("X-Access-Token", "")
+        if not tok:
+            auth = self.headers.get("Authorization", "")
+            tok = auth[len("Bearer "):] if auth.lower().startswith("bearer ") else ""
+        return tok
 
     def _log_body(self):
         if self.command == "POST" and self.headers.get("Content-Type", "").startswith("application/json"):
