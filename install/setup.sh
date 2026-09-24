@@ -77,7 +77,10 @@ install -o root -g root  -m 0644 "$INSTALL_DIR/hister-pdf-proxy.service" /etc/sy
 
 echo "==> reload + enable + start"
 systemctl daemon-reload
-systemctl enable --now "$SVC"
+systemctl enable "$SVC"
+# restart (not just enable --now): enable --now does NOT restart an already-
+# running service, so a stale process would keep serving old code after install.
+systemctl restart "$SVC"
 
 echo
 echo "==> status check"
