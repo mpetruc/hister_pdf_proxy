@@ -1,9 +1,14 @@
-# venv
+# venv / python
 .venv/
 __pycache__/
 *.pyc
+.python-version
 
 # tooling
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# packaging
+dist/
+*.egg-info/

@@ -1,0 +1,43 @@
+[project]
+name = "hister-pdf-proxy"
+version = "0.1.0"
+description = "Reverse-proxy that repairs Hister PDF ingestion (whitespace-preserving / markdown extraction)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "mpetruc" }]
+keywords = ["hister", "pdf", "proxy", "pymupdf", "search"]
+classifiers = [
+    "Environment :: No Input/Output (Daemon)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+]
+
+# Core runtime: pymupdf provides both `fitz` and `pymupdf` modules.
+dependencies = [
+    "pymupdf>=1.28.0",
+]
+
+[project.optional-dependencies]
+# `--format markdown` path. When present, pymupdf4llm's layout engine is used
+# for structured markdown. Optional so the default (fast text) install stays lean.
+markdown = [
+    "pymupdf-layout>=1.28.0",
+    "pymupdf4llm>=1.28.0",
+]
+
+[project.scripts]
+hister-pdf-proxy = "hister_pdf_proxy.proxy:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hister_pdf_proxy"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src",
+    "README.md",
+]

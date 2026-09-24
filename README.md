@@ -31,17 +31,31 @@ unchanged.
 
 ## Usage
 
+`hister-pdf-proxy` is a uv package. The core dependency is `pymupdf`; the
+`markdown` extra pulls `pymupdf4llm` + `pymupdf-layout` for structured output.
+
 ```bash
-# venv (uv)
-uv venv && uv pip install pymupdf pymupdf4llm
+# run directly from the repo (dev)
+uv sync            # installs core deps; add --extra markdown for --format markdown
+uv run hister-pdf-proxy --help
 
-# run (default: fast 'text' extraction)
+# run the console script (upstream comes from HISTER_PROXY_UPSTREAM env)
 export HISTER_PROXY_UPSTREAM=http://192.168.3.120:4433
-./.venv/bin/python proxy.py --listen 0.0.0.0 --port 4434
-
-# structured markdown ingestion (slower; needs pymupdf4llm + pymupdf-layout in venv)
-./.venv/bin/python proxy.py --listen 0.0.0.0 --port 4434 --format markdown
+uv run hister-pdf-proxy --listen 0.0.0.0 --port 4434
 ```
+
+Binary distribution (wheel/sdist):
+```bash
+uv build                          # dist/hister_pdf_proxy-*.whl / .tar.gz
+# install into a venv (optionally with the markdown extra)
+uv venv .venv --python /usr/bin/python3.13
+uv pip install --python .venv/bin/python ".[markdown]"
+.venv/bin/hister-pdf-proxy --listen 0.0.0.0 --port 4434
+```
+
+Production (systemd) install is handled by `install/setup.sh`, which installs
+this same package into `/opt/hister-pdf-proxy/.venv`. See the "Deployment"
+section.
 
 Then point Hister clients at the proxy instead of Hister's port:
 
@@ -49,6 +63,26 @@ Then point Hister clients at the proxy instead of Hister's port:
 # our web-research provider
 export WEBRESEARCH_HISTER_URL=http://<proxy-host>:4434
 # browser extension: repoint the Hister endpoint to the proxy
+```
+
+## Deployment (systemd)
+
+```bash
+sudo bash install/setup.sh            # full install (idempotent)
+sudo bash install/setup.sh --sync     # reinstall package + restart (after code changes)
+```
+
+Installs into `/opt/hister-pdf-proxy`, creates a dedicated `histerp` user, builds
+the venv on `/usr/bin/python3.13`, and installs this package **with the
+`markdown` extra**. Runs as `hister-pdf-proxy.service` on `0.0.0.0:4434`,
+hardened (`ProtectSystem=strict`, `ProtectHome=true`, …; `MemoryDenyWriteExecute`
+deliberately omitted — PyMuPDF/libmupdf needs W+X trampolines).
+
+Startup config lives in `/etc/hister-pdf-proxy/env`:
+
+```ini
+HISTER_PROXY_UPSTREAM=http://192.168.3.120:4433
+#HISTER_PROXY_FORMAT=markdown     # uncomment for structured markdown
 ```
 
 ## Behavior

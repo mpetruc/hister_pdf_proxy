@@ -10,7 +10,10 @@ User=histerp
 Group=histerp
 WorkingDirectory=/opt/hister-pdf-proxy
 EnvironmentFile=/etc/hister-pdf-proxy/env
-ExecStart=/opt/hister-pdf-proxy/.venv/bin/python /opt/hister-pdf-proxy/proxy.py --listen 0.0.0.0 --port 4434
+# Console script installed by setup.sh into the venv. The extraction format is
+# controlled by HISTER_PROXY_FORMAT in the env file ('text' default, or
+# 'markdown'). If you'd rather pass it as an arg, append '--format markdown' here.
+ExecStart=/opt/hister-pdf-proxy/.venv/bin/hister-pdf-proxy --listen 0.0.0.0 --port 4434
 Restart=on-failure
 RestartSec=3
 

@@ -1,2 +1,8 @@
 # Hister PDF-import proxy configuration (read by systemd EnvironmentFile).
+
+# Upstream Hister server (required).
 HISTER_PROXY_UPSTREAM=http://192.168.3.120:4433
+
+# PDF extraction format: text (fast, default) or markdown (pymupdf4llm layout,
+# slower, structured tables/headings). Uncomment to enable markdown:
+#HISTER_PROXY_FORMAT=markdown
