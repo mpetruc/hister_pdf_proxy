@@ -64,6 +64,39 @@ def extract_pdf_text(pdf_bytes: bytes) -> str:
     return "\n".join(parts)
 
 
+def extract_pdf_markdown(pdf_bytes: bytes) -> str:
+    """Local layout-aware PDF -> markdown via pymupdf4llm (layout mode).
+
+    Slower and needs pymupdf4llm + pymupdf-layout in the venv, but returns
+    structured markdown: real tables (pipe syntax), detected headings, list
+    hierarchies, headers/footers dropped.
+
+    Import order matters (PyMuPDF4LLM discussion #327):
+        import pymupdf.layout   # first
+        import pymupdf4llm      # after
+    The layout backend calls pymupdf.open() with a filename, so the PDF bytes
+    are staged to a temp file (scanned/scrolled-tolerant).
+    """
+    import os
+    import tempfile
+    import pymupdf.layout  # noqa: F401  (enables layout mode; must precede pymupdf4llm)
+    import pymupdf4llm
+
+    fd, path = tempfile.mkstemp(prefix="hister_pdf_", suffix=".pdf")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(pdf_bytes)
+        return pymupdf4llm.to_markdown(path)
+    finally:
+        os.unlink(path)
+
+
+def extract_pdf(pdf_bytes: bytes, fmt: str) -> str:
+    if fmt == "markdown":
+        return extract_pdf_markdown(pdf_bytes)
+    return extract_pdf_text(pdf_bytes)
+
+
 def do_csrf_handshake(base_url: str, headers: dict):
     """Return (csrf token, cookie jar) for a downstream /api/add POST.
 
@@ -99,12 +132,13 @@ def _client_auth_headers(token: str, cookie: str, have_token: bool) -> dict:
     return h
 
 
-def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes) -> tuple:
+def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes, fmt: str = "text") -> tuple:
     """Extract PDF text locally and POST to /api/add.
 
     Returns (status_code, response_body, error_string).
+    fmt: 'text' (fast, page.get_text) or 'markdown' (pymupdf4llm layout).
     """
-    text = extract_pdf_text(pdf_bytes)
+    text = extract_pdf(pdf_bytes, fmt)
     if not text.strip():
         return 400, json.dumps({"error": "pdf contains no extractable text"}), None
 
@@ -146,7 +180,7 @@ def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes) -> tuple:
         return 502, json.dumps({"error": f"forward failed: {e}"}), str(e)
 
 
-def handle_add_pdf(body: bytes, token: str, cookie: str, have_token: bool) -> tuple:
+def handle_add_pdf(body: bytes, token: str, cookie: str, have_token: bool, fmt: str = "text") -> tuple:
     """Entry point: decode the /api/add_pdf payload and forward as /api/add."""
     try:
         req = json.loads(body or b"{}")
@@ -168,12 +202,13 @@ def handle_add_pdf(body: bytes, token: str, cookie: str, have_token: bool) -> tu
     document["_token"] = token
     document["_cookie"] = cookie
     document["_have_token"] = have_token
-    return forward_pdf(UPSTREAM, document, pdf_bytes)
+    return forward_pdf(UPSTREAM, document, pdf_bytes, fmt)
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "HisterPDFProxy/0.1"
+    pdf_format = "text"  # overridden by main() from --format
 
     def _token(self) -> str:
         # The web-research provider sends `Authorization: Bearer ***`, but the
@@ -240,7 +275,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if self.command.upper() == "POST" and self.path.rstrip("/") == "/api/add_pdf":
             token = self._token()
             cookie = self.headers.get("Cookie", "")
-            status, resp, err = handle_add_pdf(body, token, cookie, have_token=bool(token))
+            status, resp, err = handle_add_pdf(body, token, cookie, have_token=bool(token),
+                                               fmt=self.pdf_format)
             logger.info("add_pdf -> /api/add status=%s %s", status, "err=" + str(err) if err else "")
             self._send(status, resp.encode("utf-8"))
             return
@@ -256,6 +292,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--listen", default=os.getenv("HISTER_PROXY_LISTEN", "0.0.0.0"))
     ap.add_argument("--port", type=int, default=int(os.getenv("HISTER_PROXY_PORT", "4434")))
+    ap.add_argument(
+        "--format",
+        choices=("text", "markdown"),
+        default=os.getenv("HISTER_PROXY_FORMAT", "text"),
+        help="PDF extraction format: 'text' (fast, page.get_text) or "
+        "'markdown' (pymupdf4llm layout, slower, structured tables/headings). "
+        "markdown requires pymupdf4llm + pymupdf-layout in the venv.",
+    )
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
 
@@ -268,9 +312,10 @@ def main():
         logger.fatal("HISTER_PROXY_UPSTREAM must be set (e.g. http://host:4433)")
         sys.exit(2)
 
+    ProxyHandler.pdf_format = a.format
     server = ThreadingHTTPServer((a.listen, a.port), ProxyHandler)
-    logger.info("hister-pdf-proxy listening on %s:%d -> upstream %s",
-                a.listen, a.port, UPSTREAM)
+    logger.info("hister-pdf-proxy listening on %s:%d -> upstream %s (pdf format: %s)",
+                a.listen, a.port, UPSTREAM, a.format)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

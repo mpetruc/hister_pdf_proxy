@@ -14,10 +14,12 @@ one-line text. This affects every ingestor, not just one client: our
 
 ## Approach
 
-This proxy intercepts `POST /api/add_pdf`, decodes the base64 PDF, extracts
-clean, **whitespace-preserving** text locally with PyMuPDF, and forwards the
-result to Hister via `/api/add` with the extracted text in `document.text` —
-bypassing the broken PDF handler.
+This proxy intercepts `POST /api/add_pdf`, decodes the base64 PDF, and extracts
+clean, **whitespace-preserving** text locally — either fast flat text
+(`page.get_text`, the default `--format text`) or structured markdown with real
+table/heading detection (`--format markdown`, via pymupdf4llm's layout engine)
+— then forwards the result to Hister via `/api/add` with the extracted text in
+`document.text`, bypassing the broken PDF handler.
 
 Everything else (search, document reads, config, non-PDF traffic) is forwarded
 unchanged.
@@ -31,11 +33,14 @@ unchanged.
 
 ```bash
 # venv (uv)
-uv venv && uv pip install pymupdf
+uv venv && uv pip install pymupdf pymupdf4llm
 
-# run
+# run (default: fast 'text' extraction)
 export HISTER_PROXY_UPSTREAM=http://192.168.3.120:4433
 ./.venv/bin/python proxy.py --listen 0.0.0.0 --port 4434
+
+# structured markdown ingestion (slower; needs pymupdf4llm + pymupdf-layout in venv)
+./.venv/bin/python proxy.py --listen 0.0.0.0 --port 4434 --format markdown
 ```
 
 Then point Hister clients at the proxy instead of Hister's port:
@@ -65,6 +70,12 @@ export WEBRESEARCH_HISTER_URL=http://<proxy-host>:4434
 | `HISTER_PROXY_UPSTREAM` | — | *(required)* | Upstream Hister base URL |
 | `HISTER_PROXY_LISTEN` | `--listen` | `0.0.0.0` | Bind address |
 | `HISTER_PROXY_PORT` | `--port` | `4434` | Listen port |
+| `HISTER_PROXY_FORMAT` | `--format` | `text` | PDF extraction: `text` (fast, `page.get_text`) or `markdown` (pymupdf4llm layout, slower, structured tables/headings) |
+
+The `--format` flag is chosen at startup: either `text` (default, no `pymupdf4llm`
+needed, fast) or `markdown` (layout engine + `pymupdf4llm`, slower, real table
+detection + heading hierarchy). The systemd unit's `ExecStart` can pass
+`--format markdown` (or set `HISTER_PROXY_FORMAT` in `/etc/hister-pdf-proxy/env`).
 
 ## Notes / limitations
 

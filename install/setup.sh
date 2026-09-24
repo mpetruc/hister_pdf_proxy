@@ -40,15 +40,15 @@ install -o root -g root -m 0755 "$SRC_DIR/proxy.py" "$APP_DIR/proxy.py"
 echo "    proxy.py synced -> $APP_DIR/proxy.py"
 
 echo "==> venv + pymupdf"
-if [ -x "$APP_DIR/.venv/bin/python" ] && "$APP_DIR/.venv/bin/python" -c "import pymupdf" >/dev/null 2>&1; then
-  echo "    venv already present with pymupdf -> skipping rebuild"
+if [ -x "$APP_DIR/.venv/bin/python" ] && "$APP_DIR/.venv/bin/python" -c "import pymupdf, pymupdf4llm" >/dev/null 2>&1; then
+  echo "    venv already present with pymupdf + pymupdf4llm -> skipping rebuild"
   echo "    (to rebuild: rm -rf $APP_DIR/.venv && rerun)"
 else
   echo "    creating venv + installing pymupdf (BASE ON SYSTEM PYTHON, not uv cache:"
   echo "    a uv-managed python symlinks into ~/.local/share/uv/python which the unit"
   echo "    rejects under ProtectHome=true -> status 203/EXEC)"
   uv venv "$APP_DIR/.venv" --python /usr/bin/python3.13
-  uv pip install --python "$APP_DIR/.venv/bin/python" pymupdf
+  uv pip install --python "$APP_DIR/.venv/bin/python" pymupdf pymupdf4llm
 fi
 # venv + app readable/executable by the runtime user (root:histerp), not others
 chown -R root:"$USER" "$APP_DIR"
