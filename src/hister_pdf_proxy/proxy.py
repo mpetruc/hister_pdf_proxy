@@ -53,6 +53,49 @@ UPSTREAM = os.getenv("HISTER_PROXY_UPSTREAM", "")
 DOC_FIELDS = ("url", "title", "label", "domain")
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "").strip() or default)
+    except ValueError:
+        logger.warning("%s not an int, using %s", name, default)
+        return default
+
+
+# Max decoded PDF size we'll extract, in bytes (0 = unlimited). Prevents a
+# runaway/huge document from exhausting memory or burning CPU indefinitely.
+MAX_PDF_BYTES = _env_int("HISTER_PROXY_MAX_BYTES", 0)
+# Hard wall-clock budget for a single PDF extraction, in seconds. The extraction
+# runs in a subprocess so a timeout actually kills the work (CPU is freed), it
+# does not abandon a thread that keeps spinning.
+EXTRACT_TIMEOUT = _env_int("HISTER_PROXY_EXTRACT_TIMEOUT", 120)
+
+
+# Inline worker run in a subprocess so extraction can be hard-killed on timeout.
+# Args: <pdf_path> <fmt>; prints single-line JSON {text, metadata: {...}}.
+_EXTRACT_WORKER = r"""
+import json, sys
+path, fmt = sys.argv[1], sys.argv[2]
+# Use pymupdf (not fitz) to avoid the fitz deprecation warning that would
+# otherwise leak to stdout and corrupt the JSON we emit.
+pymupdf = __import__("pymupdf")
+doc = pymupdf.open(path)
+meta = {k: v for k, v in (doc.metadata or {}).items() if v}
+try:
+    if fmt == "markdown":
+        import pymupdf.layout  # layout must precede pymupdf4llm
+        import pymupdf4llm
+        text = pymupdf4llm.to_markdown(path)
+    else:
+        parts = []
+        for page in doc:
+            parts.append(page.get_text())
+        text = "\n".join(parts)
+finally:
+    doc.close()
+json.dump({"text": text, "metadata": meta}, sys.stdout, ensure_ascii=False)
+"""
+
+
 # Raw pymupdf doc.metadata keys preserved verbatim under a "pdf" sub-map.
 _PDF_META_KEYS = (
     "format", "title", "subject", "keywords", "creator", "producer",
@@ -143,7 +186,55 @@ def extract_pdf(pdf_bytes: bytes, fmt: str) -> str:
     return extract_pdf_text(pdf_bytes)
 
 
-def do_csrf_handshake(base_url: str, headers: dict):
+def extract_pdf_timeout(pdf_bytes: bytes, fmt: str, timeout: int, max_bytes: int) -> tuple:
+    """Subprocess-based extraction with a hard timeout and size guard.
+
+    Returns (status_code, body, error). Extraction runs in a subprocess so that
+    when it exceeds `timeout` the process is killed and the CPU is actually
+    freed (a thread would keep spinning). On success `body` is the extracted
+    text; metadata is returned separately via the caller re-reading doc.metadata
+    is avoided by having the worker emit both.
+    """
+    if max_bytes and len(pdf_bytes) > max_bytes:
+        return 413, json.dumps({"error": f"pdf too large "
+                                         f"({len(pdf_bytes)} bytes > {max_bytes} limit)"}), None
+    import subprocess
+    import tempfile
+
+    fd, path = tempfile.mkstemp(prefix="hister_pdf_", suffix=".pdf")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(pdf_bytes)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", _EXTRACT_WORKER, path, fmt],
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return 504, json.dumps({"error": f"pdf extraction exceeded "
+                                             f"{timeout}s timeout (too large/complex?)"}), \
+                "extraction timeout"
+        if proc.returncode != 0:
+            return 500, json.dumps({"error": f"pdf extraction failed: "
+                                             f"{proc.stderr.strip()[:300]}"}), \
+                proc.stderr.strip()[:300]
+        try:
+            out = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            # Be robust to any stray stdout before the JSON (e.g. library
+            # chatter): strip everything up to the first '{'.
+            try:
+                start = proc.stdout.index("{")
+                out = json.loads(proc.stdout[start:])
+            except (ValueError, json.JSONDecodeError):
+                return 500, json.dumps({"error": "pdf extractor returned malformed output"}), \
+                    "malformed extractor output: " + proc.stdout[:200]
+        return 200, out, None
+    finally:
+        os.unlink(path)
+
+
+def do_csrf_handshake(base_url: str, headers: dict) -> tuple:
     """Return (csrf token, cookie jar) for a downstream /api/add POST.
 
     GET /api/config through the same CookieJar to bind the X-Csrf-Token to the
@@ -184,12 +275,34 @@ def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes, fmt: str = "tex
     Returns (status_code, response_body, error_string).
     fmt: 'text' (fast, page.get_text) or 'markdown' (pymupdf4llm layout).
     """
-    text = extract_pdf(pdf_bytes, fmt)
+    url = document.get("url", "")
+
+    # Surface the extension-detection gap: a PDF submitted whose URL path does
+    # not end in `.pdf` (e.g. arxiv /pdf/<id>). The extension's isPDFUrl() is a
+    # URL-string heuristic, so these PDFs only make it here when a client that
+    # DID detect them (e.g. our provider) submits them. Log it so the gap stays
+    # visible.
+    try:
+        from urllib.parse import urlsplit
+        path = urlsplit(url).path.lower()
+        if not path.endswith(".pdf") and fmt == "text":
+            logger.warning(
+                "add_pdf for URL whose path does not end in .pdf (extension "
+                "isPDFUrl heuristic may miss these): %s", url,
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+    status, out, err = extract_pdf_timeout(
+        pdf_bytes, fmt, EXTRACT_TIMEOUT, MAX_PDF_BYTES,
+    )
+    if status != 200:
+        return status, (out if isinstance(out, str) else json.dumps(out)), err
+    pdf_meta = out.get("metadata") or {}
+    text = out.get("text") or ""
     if not text.strip():
         return 400, json.dumps({"error": "pdf contains no extractable text"}), None
 
-    pdf_meta = extract_pdf_metadata(pdf_bytes)
-    url = document.get("url", "")
     token = document.get("_token", "")          # access token, if the client sent one
     have_token = bool(document.get("_have_token"))
     cookie = document.get("_cookie", "")        # browser session cookie, if sent

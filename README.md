@@ -114,6 +114,8 @@ HISTER_PROXY_UPSTREAM=http://192.168.3.120:4433
 | `HISTER_PROXY_LISTEN` | `--listen` | `0.0.0.0` | Bind address |
 | `HISTER_PROXY_PORT` | `--port` | `4434` | Listen port |
 | `HISTER_PROXY_FORMAT` | `--format` | `text` | PDF extraction: `text` (fast, `page.get_text`) or `markdown` (pymupdf4llm layout, slower, structured tables/headings) |
+| `HISTER_PROXY_EXTRACT_TIMEOUT` | — | `120` | Hard wall-clock budget (seconds) for one PDF extraction. Runs in a subprocess so a timeout actually kills the CPU work — a huge/pathological PDF fails with 504 instead of silently grinding for minutes. |
+| `HISTER_PROXY_MAX_BYTES` | — | `0` (unlimited) | Reject PDFs larger than this (bytes) with 413 before extraction. `0` disables the cap. |
 
 The `--format` flag is chosen at startup: either `text` (default, no `pymupdf4llm`
 needed, fast) or `markdown` (layout engine + `pymupdf4llm`, slower, real table
