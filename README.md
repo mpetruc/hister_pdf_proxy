@@ -21,6 +21,14 @@ table/heading detection (`--format markdown`, via pymupdf4llm's layout engine)
 — then forwards the result to Hister via `/api/add` with the extracted text in
 `document.text`, bypassing the broken PDF handler.
 
+Every PDF also has its **embedded metadata extracted** (pymupdf `doc.metadata`)
+and submitted in `document.metadata`: `author`, `description` (from the PDF
+`subject` field), and `keywords` are surfaced top-level (Hister's embedding
+context reads these — see `server/indexer/indexer.go`), while the remaining raw
+keys (`title`, `format`, `creator`, `producer`, `creationDate`, `modDate`, …)
+are preserved verbatim. Hister flattens the nested map to dotted keys
+(`pdf.title`, `pdf.creator`, …), so nothing is lost.
+
 Everything else (search, document reads, config, non-PDF traffic) is forwarded
 unchanged.
 
@@ -88,7 +96,8 @@ HISTER_PROXY_UPSTREAM=http://192.168.3.120:4433
 ## Behavior
 
 - **`POST /api/add_pdf`** → local PyMuPDF extraction → `/api/add` with clean
-  `document.text`. Returns 201/406/422 to the client on success.
+  `document.text` **plus** `document.metadata` (author/description/keywords +
+  raw PDF keys under `pdf.*`). Returns 201/406/422 to the client on success.
 - **Everything else** → transparent byte-for-byte forward to upstream
   (`Authorization` header, CSRF session, cookies, query string all preserved;
   only `Connection`/`Host`/`Content-Length`/`Transfer-Encoding` are re-derived).

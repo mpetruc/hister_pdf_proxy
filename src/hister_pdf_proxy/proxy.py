@@ -53,6 +53,52 @@ UPSTREAM = os.getenv("HISTER_PROXY_UPSTREAM", "")
 DOC_FIELDS = ("url", "title", "label", "domain")
 
 
+# Raw pymupdf doc.metadata keys preserved verbatim under a "pdf" sub-map.
+_PDF_META_KEYS = (
+    "format", "title", "subject", "keywords", "creator", "producer",
+    "creationDate", "modDate", "trapped", "encryption",
+)
+
+
+def extract_pdf_metadata(pdf_bytes: bytes) -> dict:
+    """Extract the PDF's embedded metadata (pymupdf doc.metadata).
+
+    Returns a flat dict of present, non-empty metadata keys (author, title,
+    subject, keywords, creator, producer, dates, format, encryption). Empty
+    values and the deprecated 'trapped' flag are dropped.
+    """
+    import fitz  # pymupdf, installed in this venv
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        meta = dict(doc.metadata or {})
+    finally:
+        doc.close()
+    return {k: v for k, v in meta.items() if v}
+
+
+def hister_metadata(pdf_meta: dict) -> dict:
+    """Map extracted PDF metadata onto Hister's Document.Metadata schema.
+
+    Hister's embedding context (indexer.go:970-984) reads `author`,
+    `description`, and `keywords` from Document.Metadata, so we surface those
+    top-level. The remaining raw PDF keys are preserved under a `pdf` sub-map
+    so nothing is lost while staying namespaced.
+    """
+    m = {}
+    if pdf_meta.get("author"):
+        m["author"] = pdf_meta["author"]
+    # pymupdf's `subject` is the abstract/description field.
+    if pdf_meta.get("subject"):
+        m["description"] = pdf_meta["subject"]
+    if pdf_meta.get("keywords"):
+        m["keywords"] = pdf_meta["keywords"]
+    raw = {k: pdf_meta[k] for k in _PDF_META_KEYS if pdf_meta.get(k)}
+    if raw:
+        m["pdf"] = raw
+    return m
+
+
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     """Local, whitespace-preserving PDF text extraction (PyMuPDF)."""
     import fitz  # pymupdf, installed in this venv
@@ -142,6 +188,7 @@ def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes, fmt: str = "tex
     if not text.strip():
         return 400, json.dumps({"error": "pdf contains no extractable text"}), None
 
+    pdf_meta = extract_pdf_metadata(pdf_bytes)
     url = document.get("url", "")
     token = document.get("_token", "")          # access token, if the client sent one
     have_token = bool(document.get("_have_token"))
@@ -155,6 +202,8 @@ def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes, fmt: str = "tex
         v = document.get(f)
         if v:
             payload[f] = v
+    if pdf_meta:
+        payload["metadata"] = hister_metadata(pdf_meta)
     body = json.dumps(payload).encode("utf-8")
     headers = dict(auth_headers)
     headers.update(
