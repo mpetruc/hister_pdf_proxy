@@ -368,6 +368,15 @@ def handle_add_pdf(body: bytes, token: str, cookie: str, have_token: bool, fmt: 
     except Exception as e:  # noqa: BLE001
         return 400, json.dumps({"error": f"pdf must be base64-encoded: {e}"}), None
 
+    # Per-request extraction-format override (the extension's "pdf2md" button
+    # sends document.format). Only text/markdown are valid; anything else falls
+    # back to this handler's startup default (fmt).
+    requested = document.get("format")
+    if requested in ("text", "markdown"):
+        fmt = requested
+    # "format" is a proxy-only hint; never forward it to /api/add.
+    document.pop("format", None)
+
     document["_token"] = token
     document["_cookie"] = cookie
     document["_have_token"] = have_token
