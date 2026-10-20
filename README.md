@@ -7,9 +7,10 @@ that repairs PDF ingestion.
 
 Hister's built-in PDF text extraction (`github.com/asciimoo/pdf` →
 `GetPlainText()`) strips **all whitespace**, so PDFs index as unsearchable
-one-line text. This affects every ingestor, not just one client: our
-`web-research-extract` *and* the browser extension both send the same
-`/api/add_pdf` shape and both get mangled text. Tracked upstream in
+one-line text. Because the mangling happens in Hister's own extractor, it
+affects *every* ingestor that submits a PDF through the `/api/add_pdf`
+endpoint — the browser extension, `hister import`, or any other HTTP client —
+not just one client. Tracked upstream in
 [asciimoo/hister#55](https://github.com/asciimoo/hister/issues/55).
 
 ## Approach
