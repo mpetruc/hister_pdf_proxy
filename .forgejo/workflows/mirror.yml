@@ -22,4 +22,5 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           git remote add github git@github.com:mpetruc/hister_pdf_proxy.git
-          git push --all --tags github
+          git push --all github
+          git push --tags github
