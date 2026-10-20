@@ -29,10 +29,11 @@ if [ "${1:-}" = "--sync" ]; then
   fi
   _pkg_install
   # Re-apply runtime ownership + exec bits. uv pip install runs as root and
-  # recreates the console script, which can lose the service user's execute
-  # access (Errno 13 Permission denied on start) unless we re-chown/chmod —
-  # the full-install path does this, but --sync previously skipped it.
+  # recreates the console script + module files, which can end up 0600/root-only
+  # (or lose the service user's execute access). Ensure the group (service user)
+  # can read/traverse, then strip other access.
   chown -R root:"$USER" "$APP_DIR/.venv"
+  chmod -R g+rX "$APP_DIR/.venv"
   chmod -R o-rwx "$APP_DIR/.venv"
   chmod 0755 "$APP_DIR/.venv/bin/hister-pdf-proxy"
   chmod 0755 "$APP_DIR/.venv/bin/python"
@@ -74,6 +75,7 @@ _pkg_install
 # venv + app readable/executable by the runtime user (root:histerp), not others
 chown -R root:"$USER" "$APP_DIR/.venv"
 chown -R root:root "$APP_DIR/src"
+chmod -R g+rX "$APP_DIR/.venv"
 chmod -R o-rwx "$APP_DIR/.venv"
 chmod 0755 "$APP_DIR/.venv/bin/hister-pdf-proxy"
 chmod 0755 "$APP_DIR/.venv/bin/python"
