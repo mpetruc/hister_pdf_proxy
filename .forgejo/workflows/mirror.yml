@@ -20,6 +20,9 @@ jobs:
           chmod 700 ~/.ssh
           echo "$GH_SSH_KEY_B64" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+          echo "secret length: ${#GH_SSH_KEY_B64}"
+          echo "key file bytes: $(wc -c < ~/.ssh/id_ed25519)"
+          ssh-keygen -lf ~/.ssh/id_ed25519 || echo "KEY PARSE FAILED"
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           git remote add github git@github.com:mpetruc/hister-pdf-proxy.git
           git push --mirror github
