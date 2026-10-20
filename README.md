@@ -29,6 +29,14 @@ keys (`title`, `format`, `creator`, `producer`, `creationDate`, `modDate`, …)
 are preserved verbatim. Hister flattens the nested map to dotted keys
 (`pdf.title`, `pdf.creator`, …), so nothing is lost.
 
+**Title repair.** The browser extension sends the *current tab's* title, which
+for a PDF loaded into a pre-existing tab is the **previous page's** title (or an
+interstitial like "Preparing to download ..."). Titles feed reranking, so a
+stale/generic title actively hurts retrieval. When the PDF has an embedded
+`title`, the proxy uses **it** instead of the client-supplied one; if the PDF
+has no embedded title, the client's title is kept. So PDFs get correct,
+stable titles end-to-end.
+
 Everything else (search, document reads, config, non-PDF traffic) is forwarded
 unchanged.
 
