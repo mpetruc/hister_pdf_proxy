@@ -316,6 +316,13 @@ def forward_pdf(base_url: str, document: dict, pdf_bytes: bytes, fmt: str = "tex
         if v:
             payload[f] = v
     if pdf_meta:
+        # Prefer the PDF's embedded title over the client-supplied one: the
+        # browser extension sends the current tab title, which for a PDF
+        # navigated in a pre-existing tab is the PREVIOUS page's title (or an
+        # interstitial like "Preparing to download ..."). Titles feed reranking,
+        # so a stale/generic title actively hurts retrieval.
+        if pdf_meta.get("title"):
+            payload["title"] = pdf_meta["title"]
         payload["metadata"] = hister_metadata(pdf_meta)
     body = json.dumps(payload).encode("utf-8")
     headers = dict(auth_headers)
