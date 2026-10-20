@@ -14,10 +14,11 @@ jobs:
       - name: Push to GitHub
         shell: bash
         env:
-          GH_SSH_KEY: ${{ secrets.GH_SSH_KEY }}
+          GH_SSH_KEY_B64: ${{ secrets.GH_SSH_KEY_B64 }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "$GH_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 700 ~/.ssh
+          echo "$GH_SSH_KEY_B64" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           git remote add github git@github.com:mpetruc/hister-pdf-proxy.git
